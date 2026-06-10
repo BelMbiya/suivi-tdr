@@ -1,0 +1,150 @@
+name: CI and Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  NODE_VERSION: "22"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://user:pass@localhost:5432/track_tdr' }}
+  SHADOW_DATABASE_URL: ${{ secrets.SHADOW_DATABASE_URL || 'postgresql://user:pass@localhost:5432/track_tdr_shadow' }}
+  JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET || 'ci-access-secret-change-me-32-chars' }}
+  JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET || 'ci-refresh-secret-change-me-32-chars' }}
+  NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+
+jobs:
+  quality:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Build Next.js
+        run: npm run build
+
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  migrate:
+    name: Deploy Neon Migrations
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy Prisma migrations
+        run: npm run prisma:deploy
+        env:
+          DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL || secrets.DATABASE_URL }}
+          SHADOW_DATABASE_URL: ${{ secrets.SHADOW_DATABASE_URL }}
+
+  deploy:
+    name: Deploy App over SSH
+    runs-on: ubuntu-latest
+    needs:
+      - docker
+      - migrate
+    if: github.event_name == 'push' && vars.ENABLE_SSH_DEPLOY == 'true'
+
+    steps:
+      - name: Deploy Docker image
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            docker pull ghcr.io/${{ github.repository }}:latest
+            docker stop track-tdr || true
+            docker rm track-tdr || true
+            docker run -d \
+              --name track-tdr \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+              -e REDIS_URL='${{ secrets.REDIS_URL }}' \
+              -e JWT_ACCESS_SECRET='${{ secrets.JWT_ACCESS_SECRET }}' \
+              -e JWT_REFRESH_SECRET='${{ secrets.JWT_REFRESH_SECRET }}' \
+              -e NEXT_PUBLIC_APP_URL='${{ secrets.NEXT_PUBLIC_APP_URL }}' \
+              ghcr.io/${{ github.repository }}:latest

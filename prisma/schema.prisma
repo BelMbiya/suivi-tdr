@@ -1,0 +1,276 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RoleName {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  USER
+}
+
+enum LocationSource {
+  WEB
+  MOBILE
+  IMPORT
+}
+
+enum LocationAreaStatus {
+  IN_AREA
+  OUT_OF_AREA
+  UNKNOWN_AREA
+}
+
+enum GeofenceType {
+  CIRCLE
+  POLYGON
+}
+
+enum GeofenceEventType {
+  ENTER
+  EXIT
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  ACTIVATE
+  DEACTIVATE
+  ASSIGN_AREA
+  LOCATION_RECEIVED
+  GEOFENCE_ENTER
+  GEOFENCE_EXIT
+}
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  users          User[]
+  areas          Area[]
+  devices        Device[]
+  locations      Location[]
+  geofences      Geofence[]
+  geofenceEvents GeofenceEvent[]
+  auditLogs      AuditLog[]
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  email          String
+  passwordHash   String
+  firstName      String
+  lastName       String
+  phone          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roles          UserRole[]
+  sessions       Session[]
+  devices        Device[]
+  locations      Location[]
+  userAreas      UserArea[]
+  geofenceEvents GeofenceEvent[]
+  auditLogs      AuditLog[]      @relation("AuditActor")
+
+  @@unique([organizationId, email])
+  @@index([organizationId, isActive])
+  @@index([email])
+}
+
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      RoleName @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  users UserRole[]
+}
+
+model UserRole {
+  userId    String   @db.Uuid
+  roleId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model Session {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  refreshHash  String
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime  @db.Timestamptz(6)
+  revokedAt    DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Device {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  userId         String    @db.Uuid
+  name           String
+  platform       String    @default("WEB")
+  externalId     String?
+  isActive       Boolean   @default(true)
+  lastSeenAt     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locations    Location[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, userId])
+}
+
+model Area {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  code           String
+  description    String?
+  boundary       Json?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        UserArea[]
+  locations    Location[]
+  geofences    Geofence[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, isActive])
+}
+
+model UserArea {
+  userId    String   @db.Uuid
+  areaId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  area Area @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@id([userId, areaId])
+  @@index([areaId])
+}
+
+model Location {
+  id             String             @id @default(uuid()) @db.Uuid
+  organizationId String             @db.Uuid
+  userId         String             @db.Uuid
+  areaId         String?            @db.Uuid
+  deviceId       String?            @db.Uuid
+  latitude       Float
+  longitude      Float
+  accuracy       Float?
+  speed          Float?
+  altitude       Float?
+  heading        Float?
+  batteryLevel   Int?
+  source         LocationSource     @default(WEB)
+  areaStatus     LocationAreaStatus @default(UNKNOWN_AREA)
+  clientId       String?
+  recordedAt     DateTime           @db.Timestamptz(6)
+  receivedAt     DateTime           @default(now()) @db.Timestamptz(6)
+  metadata       Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  area         Area?         @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  device       Device?       @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, clientId])
+  @@index([organizationId, recordedAt])
+  @@index([userId, recordedAt])
+  @@index([areaId, recordedAt])
+  @@index([deviceId, recordedAt])
+}
+
+model Geofence {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  areaId         String?      @db.Uuid
+  name           String
+  type           GeofenceType
+  centerLat      Float?
+  centerLng      Float?
+  radiusMeters   Float?
+  polygon        Json?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  area         Area?          @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  events       GeofenceEvent[]
+
+  @@index([organizationId, isActive])
+  @@index([areaId])
+}
+
+model GeofenceEvent {
+  id             String             @id @default(uuid()) @db.Uuid
+  organizationId String             @db.Uuid
+  geofenceId     String             @db.Uuid
+  userId         String             @db.Uuid
+  locationId     String?            @db.Uuid
+  type           GeofenceEventType
+  occurredAt     DateTime           @default(now()) @db.Timestamptz(6)
+  metadata       Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  geofence     Geofence     @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, occurredAt])
+  @@index([geofenceId, occurredAt])
+  @@index([userId, occurredAt])
+}
+
+model AuditLog {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String?     @db.Uuid
+  actorId        String?     @db.Uuid
+  action         AuditAction
+  entityType     String
+  entityId       String?
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor       User?          @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+}

@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Track TDR
 
-## Getting Started
+Plateforme web Next.js 16 de supervision GPS temps réel, conçue pour Neon PostgreSQL/PostGIS, Prisma, Socket.IO, Redis et Tailwind CSS.
 
-First, run the development server:
+## Setup
 
 ```bash
+npm install
+cp .env.example .env
+npm run prisma:generate
+npm run prisma:deploy
+npm run db:seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Neon
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Configure :
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `DATABASE_URL` : URL pooled Neon avec `pgbouncer=true`.
+- `DIRECT_DATABASE_URL` : URL directe Neon pour Prisma migrations.
+- `SHADOW_DATABASE_URL` : base shadow pour migrations en développement.
 
-## Learn More
+Active PostGIS sur Neon avant les migrations :
 
-To learn more about Next.js, take a look at the following resources:
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `app/` : App Router pages and Route Handlers.
+- `features/` : UI and feature-level web modules.
+- `services/` : domain orchestration.
+- `repositories/` : Prisma data access.
+- `validations/` : Zod schemas.
+- `sockets/` : Socket.IO server and events.
+- `prisma/` : Prisma schema, migrations and seed.
 
-## Deploy on Vercel
+Documentation :
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- [API](docs/API.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Testing](docs/TESTING.md)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Docker
+
+```bash
+docker compose up --build
+```
+
+For local PostGIS instead of Neon:
+
+```bash
+docker compose --profile local-db up --build
+```
+

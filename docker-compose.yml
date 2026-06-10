@@ -1,0 +1,48 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    depends_on:
+      - redis
+    ports:
+      - "3000:3000"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    profiles:
+      - local-db
+    environment:
+      POSTGRES_USER: track
+      POSTGRES_PASSWORD: track
+      POSTGRES_DB: track_tdr
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+volumes:
+  redis-data:
+  postgres-data:
